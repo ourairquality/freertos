@@ -1,5 +1,5 @@
 /*
-    FreeRTOS V9.0.0 - Copyright (C) 2016 Real Time Engineers Ltd.
+    FreeRTOS V9.0.1 - Copyright (C) 2017 Real Time Engineers Ltd.
     All rights reserved
 
     VISIT http://www.FreeRTOS.org TO ENSURE YOU ARE USING THE LATEST VERSION.
@@ -104,6 +104,7 @@ task.h is included from an application file. */
 	static uint8_t ucHeap[ configTOTAL_HEAP_SIZE ];
 #endif /* configAPPLICATION_ALLOCATED_HEAP */
 
+/* Index into the ucHeap array. */
 static size_t xNextFreeByte = ( size_t ) 0;
 
 /*-----------------------------------------------------------*/
