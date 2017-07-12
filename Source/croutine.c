@@ -62,9 +62,9 @@
     1 tab == 4 spaces!
 */
 
-#include "FreeRTOS.h"
-#include "task.h"
-#include "croutine.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/croutine.h"
 
 /*
  * Some kernel aware debuggers require data to be viewed to be global, rather
