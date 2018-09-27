@@ -1,6 +1,6 @@
 /*
- * FreeRTOS Kernel V10.0.1
- * Copyright (C) 2017 Amazon.com, Inc. or its affiliates.  All Rights Reserved.
+ * FreeRTOS Kernel V10.1.1
+ * Copyright (C) 2018 Amazon.com, Inc. or its affiliates.  All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of
  * this software and associated documentation files (the "Software"), to deal in
@@ -266,7 +266,7 @@ to its original value when it is released. */
  * and stores task state information, including a pointer to the task's context
  * (the task's run time environment, including register values)
  */
-typedef struct TaskControlBlock_t
+typedef struct tskTaskControlBlock 			/* The old naming convention is used to prevent breaking kernel aware debuggers. */
 {
 	volatile StackType_t	*pxTopOfStack;	/*< Points to the location of the last item placed on the tasks stack.  THIS MUST BE THE FIRST MEMBER OF THE TCB STRUCT. */
 
@@ -336,6 +336,10 @@ typedef struct TaskControlBlock_t
 		uint8_t ucDelayAborted;
 	#endif
 
+	#if( configUSE_POSIX_ERRNO == 1 )
+		int iTaskErrno;
+	#endif
+
 } tskTCB;
 
 /* The old tskTCB name is maintained above then typedefed to the new TCB_t name
@@ -346,8 +350,13 @@ typedef tskTCB TCB_t;
 which static variables must be declared volatile. */
 PRIVILEGED_DATA TCB_t * volatile pxCurrentTCB = NULL;
 
-/* Lists for ready and blocked tasks. --------------------*/
+/* Lists for ready and blocked tasks. --------------------
+xDelayedTaskList1 and xDelayedTaskList2 could be move to function scople but
+doing so breaks some kernel aware debuggers and debuggers that rely on removing
+the static qualifier. */
 PRIVILEGED_DATA static List_t pxReadyTasksLists[ configMAX_PRIORITIES ];/*< Prioritised ready tasks. */
+PRIVILEGED_DATA static List_t xDelayedTaskList1;						/*< Delayed tasks. */
+PRIVILEGED_DATA static List_t xDelayedTaskList2;						/*< Delayed tasks (two lists are used - one for delays that have overflowed the current tick count. */
 PRIVILEGED_DATA static List_t * volatile pxDelayedTaskList;				/*< Points to the delayed task list currently being used. */
 PRIVILEGED_DATA static List_t * volatile pxOverflowDelayedTaskList;		/*< Points to the delayed task list currently being used to hold tasks that have overflowed the current tick count. */
 PRIVILEGED_DATA static List_t xPendingReadyList;						/*< Tasks that have been readied while the scheduler was suspended.  They will be moved to the ready list when the scheduler is resumed. */
@@ -363,6 +372,12 @@ PRIVILEGED_DATA static List_t xPendingReadyList;						/*< Tasks that have been r
 
 	PRIVILEGED_DATA static List_t xSuspendedTaskList;					/*< Tasks that are currently suspended. */
 
+#endif
+
+/* Global POSIX errno. Its value is changed upon context switching to match
+the errno of the currently running task. */
+#if ( configUSE_POSIX_ERRNO == 1 )
+	int FreeRTOS_errno = 0;
 #endif
 
 /* Other file private variables. --------------------------------*/
@@ -386,6 +401,15 @@ kernel to move the task from the pending ready list into the real ready list
 when the scheduler is unsuspended.  The pending ready list itself can only be
 accessed from a critical section. */
 PRIVILEGED_DATA static volatile UBaseType_t uxSchedulerSuspended	= ( UBaseType_t ) pdFALSE;
+
+#if ( configGENERATE_RUN_TIME_STATS == 1 )
+
+	/* Do not move these variables to function scope as doing so prevents the
+	code working with debuggers that need to remove the static qualifier. */
+	PRIVILEGED_DATA static uint32_t ulTaskSwitchedInTime = 0UL;	/*< Holds the value of a timer/counter the last time a task was switched in. */
+	PRIVILEGED_DATA static uint32_t ulTotalRunTime = 0UL;		/*< Holds the total amount of execution time as defined by the run time counter clock. */
+
+#endif
 
 /*lint -restore */
 
@@ -2888,9 +2912,6 @@ void vTaskSwitchContext( void )
 
 		#if ( configGENERATE_RUN_TIME_STATS == 1 )
 		{
-			PRIVILEGED_DATA static uint32_t ulTaskSwitchedInTime = 0UL;	/*< Holds the value of a timer/counter the last time a task was switched in. */
-			PRIVILEGED_DATA static uint32_t ulTotalRunTime = 0UL;		/*< Holds the total amount of execution time as defined by the run time counter clock. */
-
 				#ifdef portALT_GET_RUN_TIME_COUNTER_VALUE
 					portALT_GET_RUN_TIME_COUNTER_VALUE( ulTotalRunTime );
 				#else
@@ -2919,10 +2940,24 @@ void vTaskSwitchContext( void )
 		/* Check for stack overflow, if configured. */
 		taskCHECK_FOR_STACK_OVERFLOW();
 
+		/* Before the currently running task is switched out, save its errno. */
+		#if( configUSE_POSIX_ERRNO == 1 )
+		{
+			pxCurrentTCB->iTaskErrno = FreeRTOS_errno;
+		}
+		#endif
+
 		/* Select a new task to run using either the generic C or port
 		optimised asm code. */
 		taskSELECT_HIGHEST_PRIORITY_TASK(); /*lint !e9079 void * is used as this macro is used with timers and co-routines too.  Alignment is known to be fine as the type of the pointer stored and retrieved is the same. */
 		traceTASK_SWITCHED_IN();
+
+		/* After the new task is switched in, update the global errno. */
+		#if( configUSE_POSIX_ERRNO == 1 )
+		{
+			FreeRTOS_errno = pxCurrentTCB->iTaskErrno;
+		}
+		#endif
 
 		#if ( configUSE_NEWLIB_REENTRANT == 1 )
 		{
@@ -3464,8 +3499,6 @@ static portTASK_FUNCTION( prvIdleTask, pvParameters )
 static void prvInitialiseTaskLists( void )
 {
 UBaseType_t uxPriority;
-PRIVILEGED_DATA static List_t xDelayedTaskList1;	/*< Delayed tasks. */
-PRIVILEGED_DATA static List_t xDelayedTaskList2;	/*< Delayed tasks (two lists are used - one for delays that have overflowed the current tick count. */
 
 	for( uxPriority = ( UBaseType_t ) 0U; uxPriority < ( UBaseType_t ) configMAX_PRIORITIES; uxPriority++ )
 	{
@@ -5075,12 +5108,12 @@ when performing module tests). */
 
 	#include "freertos_tasks_c_additions.h"
 
-	static void freertos_tasks_c_additions_init( void )
-	{
-		#ifdef FREERTOS_TASKS_C_ADDITIONS_INIT
+	#ifdef FREERTOS_TASKS_C_ADDITIONS_INIT
+		static void freertos_tasks_c_additions_init( void )
+		{
 			FREERTOS_TASKS_C_ADDITIONS_INIT();
-		#endif
-	}
+		}
+	#endif
 
 #endif
 
